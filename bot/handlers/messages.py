@@ -4,9 +4,8 @@ Message handlers for the Telegram Finance Bot.
 Handles text messages for transaction processing.
 """
 
-from aiogram import Router
 from aiogram.types import Message
-from aiogram.filters import Text
+from aiogram import Router
 from decimal import Decimal
 import structlog
 
@@ -22,7 +21,7 @@ logger = structlog.get_logger()
 messages_router = Router()
 
 
-@messages_router.message(Text())
+@messages_router.message()
 async def handle_text_message(message: Message, user: User):
     """
     Handle text messages that might contain transaction information.
@@ -31,6 +30,10 @@ async def handle_text_message(message: Message, user: User):
         message: Telegram message
         user: Authorized user
     """
+    # Only process text messages
+    if not message.text:
+        return await handle_other_messages(message, user)
+    
     text = message.text.strip()
     
     logger.info("Processing text message", user_id=user.telegram_id, text_length=len(text))
@@ -218,35 +221,10 @@ async def send_transaction_confirmation(message: Message, transaction: Transacti
     await message.answer(confirmation_text)
 
 
-# Handle confirmation messages (for low confidence transactions)
-@messages_router.message(Text(text__in=["да", "yes", "подтверждаю", "подтвердить", "верно", "правильно"]))
-async def handle_confirmation(message: Message, user: User):
-    """
-    Handle confirmation messages for low confidence transactions.
-    
-    Args:
-        message: Telegram message
-        user: Authorized user
-    """
-    # This would need to be implemented with state management
-    # For now, just acknowledge
-    await message.answer("👍 Понял! В следующей версии добавим подтверждение транзакций.")
+# Handle confirmation messages (placeholder for future implementation)
 
 
-@messages_router.message(Text(text__in=["нет", "no", "неправильно", "отмена", "cancel"]))
-async def handle_rejection(message: Message, user: User):
-    """
-    Handle rejection messages for low confidence transactions.
-    
-    Args:
-        message: Telegram message
-        user: Authorized user
-    """
-    await message.answer(
-        "❌ Понял, отменяю.\n\n"
-        "💡 Попробуйте написать транзакцию по-другому.\n"
-        "Например: \"потратил 500 руб на продукты\""
-    )
+# Handle rejection messages (placeholder for future implementation)
 
 
 # Handle other message types
