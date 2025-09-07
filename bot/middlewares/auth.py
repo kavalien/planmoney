@@ -43,12 +43,22 @@ class AuthMiddleware(BaseMiddleware):
         """
         user_id = None
         telegram_user = None
+        chat_id = None
+        chat_type = None
         
-        # Extract user information from different event types
+        # Extract user and chat information from different event types
         if isinstance(event, (Message, CallbackQuery)):
             if event.from_user:
                 user_id = event.from_user.id
                 telegram_user = event.from_user
+            
+            # Get chat information
+            if isinstance(event, Message) and event.chat:
+                chat_id = event.chat.id
+                chat_type = event.chat.type
+            elif isinstance(event, CallbackQuery) and event.message and event.message.chat:
+                chat_id = event.message.chat.id
+                chat_type = event.message.chat.type
         
         # If we couldn't get user ID, block the request
         if user_id is None:
@@ -61,11 +71,13 @@ class AuthMiddleware(BaseMiddleware):
                 "Unauthorized access attempt",
                 user_id=user_id,
                 username=telegram_user.username if telegram_user else None,
-                first_name=telegram_user.first_name if telegram_user else None
+                first_name=telegram_user.first_name if telegram_user else None,
+                chat_id=chat_id,
+                chat_type=chat_type
             )
             
-            # Send unauthorized message for Message events
-            if isinstance(event, Message):
+            # Send unauthorized message for Message events in private chats only
+            if isinstance(event, Message) and chat_type == "private":
                 await event.answer(
                     "🚫 У вас нет доступа к этому боту.\n"
                     "Этот бот предназначен только для авторизованных пользователей."
@@ -73,17 +85,41 @@ class AuthMiddleware(BaseMiddleware):
             
             return None
         
+        # For group chats, check if group chat is allowed
+        if chat_type in ["group", "supergroup"]:
+            if not self.config.ALLOW_GROUP_CHAT:
+                logger.warning(
+                    "Group chat access denied - not allowed",
+                    user_id=user_id,
+                    chat_id=chat_id
+                )
+                return None
+            
+            # If specific group ID is configured, check it
+            if self.config.AUTHORIZED_GROUP_ID and chat_id != self.config.AUTHORIZED_GROUP_ID:
+                logger.warning(
+                    "Group chat access denied - wrong group",
+                    user_id=user_id,
+                    chat_id=chat_id,
+                    expected_group_id=self.config.AUTHORIZED_GROUP_ID
+                )
+                return None
+        
         # Create User object and add to data
         if telegram_user:
             user = User.from_telegram_user(telegram_user)
             user.update_last_seen()
             data["user"] = user
+            data["chat_id"] = chat_id
+            data["chat_type"] = chat_type
             
             logger.info(
                 "Authorized user request",
                 user_id=user_id,
                 username=user.username,
-                display_name=user.display_name
+                display_name=user.display_name,
+                chat_type=chat_type,
+                chat_id=chat_id
             )
         
         # User is authorized, continue to next handler

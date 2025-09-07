@@ -22,21 +22,27 @@ messages_router = Router()
 
 
 @messages_router.message()
-async def handle_text_message(message: Message, user: User):
+async def handle_text_message(message: Message, user: User, chat_type: str = None):
     """
     Handle text messages that might contain transaction information.
     
     Args:
         message: Telegram message
         user: Authorized user
+        chat_type: Type of chat (private, group, supergroup)
     """
     # Only process text messages
     if not message.text:
-        return await handle_other_messages(message, user)
+        return await handle_other_messages(message, user, chat_type)
     
     text = message.text.strip()
     
-    logger.info("Processing text message", user_id=user.telegram_id, text_length=len(text))
+    logger.info(
+        "Processing text message", 
+        user_id=user.telegram_id, 
+        text_length=len(text),
+        chat_type=chat_type
+    )
     
     # Skip if message is empty or too short
     if len(text) < 3:
@@ -45,7 +51,7 @@ async def handle_text_message(message: Message, user: User):
     # Check if this looks like a transaction message
     if not is_transaction_message(text):
         logger.debug("Message does not appear to be a transaction", user_id=user.telegram_id)
-        await handle_non_transaction_message(message, user)
+        await handle_non_transaction_message(message, user, chat_type)
         return
     
     # Parse the transaction
@@ -62,12 +68,12 @@ async def handle_text_message(message: Message, user: User):
     
     # Check if parsing was successful
     if not parsed.amount or not parsed.transaction_type:
-        await handle_unclear_message(message, user, parsed)
+        await handle_unclear_message(message, user, parsed, chat_type)
         return
     
     # Check if confidence is too low
     if parsed.confidence < 0.5:
-        await handle_low_confidence_message(message, user, parsed)
+        await handle_low_confidence_message(message, user, parsed, chat_type)
         return
     
     # Create transaction object
@@ -104,19 +110,21 @@ async def handle_text_message(message: Message, user: User):
         row_number = await add_transaction_to_sheets(transaction)
         transaction.spreadsheet_row = row_number
         
-        # Send confirmation
-        await send_transaction_confirmation(message, transaction)
+        if row_number > 0:
+            # Send confirmation with Google Sheets info
+            await send_transaction_confirmation(message, transaction, user, chat_type)
+        else:
+            # Send confirmation without Google Sheets (service unavailable)
+            await send_transaction_confirmation_no_sheets(message, transaction, user, chat_type)
         
-        # Store transaction in message data for logging middleware
-        message.data = getattr(message, 'data', {})
-        message.data['transaction'] = transaction
-        
+        # Transaction processed successfully
         logger.info(
             "Transaction processed successfully",
             user_id=user.telegram_id,
             amount=str(transaction.amount),
             category=transaction.category,
-            row_number=row_number
+            row_number=row_number,
+            sheets_available=row_number > 0
         )
         
     except Exception as e:
@@ -127,20 +135,25 @@ async def handle_text_message(message: Message, user: User):
         )
 
 
-async def handle_non_transaction_message(message: Message, user: User):
+async def handle_non_transaction_message(message: Message, user: User, chat_type: str = None):
     """
     Handle messages that don't appear to be transactions.
     
     Args:
         message: Telegram message
         user: Authorized user
+        chat_type: Type of chat
     """
-    # For now, just ignore non-transaction messages
-    # Could be extended to handle other types of messages
-    logger.debug("Ignoring non-transaction message", user_id=user.telegram_id)
+    # For now, just ignore non-transaction messages in groups
+    # In private chats, we might want to provide help
+    logger.debug(
+        "Ignoring non-transaction message", 
+        user_id=user.telegram_id,
+        chat_type=chat_type
+    )
 
 
-async def handle_unclear_message(message: Message, user: User, parsed):
+async def handle_unclear_message(message: Message, user: User, parsed, chat_type: str = None):
     """
     Handle messages where transaction parsing was unclear.
     
@@ -148,8 +161,9 @@ async def handle_unclear_message(message: Message, user: User, parsed):
         message: Telegram message
         user: Authorized user
         parsed: Parsed transaction data
+        chat_type: Type of chat
     """
-    logger.info("Handling unclear transaction message", user_id=user.telegram_id)
+    logger.info("Handling unclear transaction message", user_id=user.telegram_id, chat_type=chat_type)
     
     unclear_text = "🤔 Не совсем понял ваше сообщение.\n\n"
     
@@ -168,7 +182,7 @@ async def handle_unclear_message(message: Message, user: User, parsed):
     await message.answer(unclear_text)
 
 
-async def handle_low_confidence_message(message: Message, user: User, parsed):
+async def handle_low_confidence_message(message: Message, user: User, parsed, chat_type: str = None):
     """
     Handle messages with low confidence parsing.
     
@@ -176,8 +190,14 @@ async def handle_low_confidence_message(message: Message, user: User, parsed):
         message: Telegram message
         user: Authorized user
         parsed: Parsed transaction data
+        chat_type: Type of chat
     """
-    logger.info("Handling low confidence transaction message", user_id=user.telegram_id, confidence=parsed.confidence)
+    logger.info(
+        "Handling low confidence transaction message", 
+        user_id=user.telegram_id, 
+        confidence=parsed.confidence,
+        chat_type=chat_type
+    )
     
     confirmation_text = f"❓ Правильно ли я понял?\n\n"
     
@@ -197,15 +217,52 @@ async def handle_low_confidence_message(message: Message, user: User, parsed):
     await message.answer(confirmation_text)
 
 
-async def send_transaction_confirmation(message: Message, transaction: Transaction):
+async def send_transaction_confirmation_no_sheets(message: Message, transaction: Transaction, user: User, chat_type: str = None):
+    """
+    Send confirmation message when Google Sheets is unavailable.
+    
+    Args:
+        message: Original message
+        transaction: Processed transaction
+        user: User who made the transaction
+        chat_type: Type of chat
+    """
+    # Add user info for group chats
+    user_prefix = ""
+    if chat_type in ["group", "supergroup"]:
+        user_prefix = f"👤 {user.display_name}\n"
+    
+    confirmation_text = f"{user_prefix}✅ **Транзакция записана!**\n\n"
+    confirmation_text += f"{transaction.type_emoji} {transaction.category_emoji} "
+    confirmation_text += f"**{transaction.formatted_amount_with_sign}**\n"
+    confirmation_text += f"🏷️ Категория: {transaction.category}\n"
+    
+    if transaction.description:
+        confirmation_text += f"📝 Описание: {transaction.description}\n"
+    
+    confirmation_text += f"📅 Дата: {transaction.date.strftime('%d.%m.%Y %H:%M')}\n"
+    confirmation_text += f"\n⚠️ Пока не сохранено в Google Таблицы"
+    confirmation_text += f"\n🔧 Подключение восстановится автоматически"
+    
+    await message.answer(confirmation_text)
+
+
+async def send_transaction_confirmation(message: Message, transaction: Transaction, user: User, chat_type: str = None):
     """
     Send confirmation message for successful transaction.
     
     Args:
         message: Original message
         transaction: Processed transaction
+        user: User who made the transaction
+        chat_type: Type of chat
     """
-    confirmation_text = f"✅ **Транзакция записана!**\n\n"
+    # Add user info for group chats
+    user_prefix = ""
+    if chat_type in ["group", "supergroup"]:
+        user_prefix = f"👤 {user.display_name}\n"
+    
+    confirmation_text = f"{user_prefix}✅ **Транзакция записана!**\n\n"
     confirmation_text += f"{transaction.type_emoji} {transaction.category_emoji} "
     confirmation_text += f"**{transaction.formatted_amount_with_sign}**\n"
     confirmation_text += f"🏷️ Категория: {transaction.category}\n"
@@ -227,19 +284,24 @@ async def send_transaction_confirmation(message: Message, transaction: Transacti
 # Handle rejection messages (placeholder for future implementation)
 
 
-# Handle other message types
 @messages_router.message()
-async def handle_other_messages(message: Message, user: User):
+async def handle_other_messages(message: Message, user: User, chat_type: str = None):
     """
     Handle other types of messages (photos, documents, etc.).
     
     Args:
         message: Telegram message
         user: Authorized user
+        chat_type: Type of chat
     """
     content_type = message.content_type
     
-    logger.info("Received non-text message", user_id=user.telegram_id, content_type=content_type)
+    logger.info(
+        "Received non-text message", 
+        user_id=user.telegram_id, 
+        content_type=content_type,
+        chat_type=chat_type
+    )
     
     if content_type in ['photo', 'document']:
         await message.answer(

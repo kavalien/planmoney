@@ -4,9 +4,15 @@ Main bot module for the Telegram Finance Bot.
 Entry point for the bot with aiogram setup and configuration.
 """
 
+import sys
+import os
 import asyncio
 import signal
-import sys
+from pathlib import Path
+
+# Add project root to path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 from typing import Optional
 
 from aiogram import Bot, Dispatcher
@@ -14,13 +20,13 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 import structlog
 
-from .config import get_config, validate_config
-from .middlewares.auth import AuthMiddleware
-from .middlewares.logging import LoggingMiddleware, setup_logging
-from .handlers.commands import commands_router
-from .handlers.messages import messages_router
-from .handlers.errors import errors_router
-from .services.google_sheets import get_sheets_service
+from bot.config import get_config, validate_config
+from bot.middlewares.auth import AuthMiddleware
+from bot.middlewares.logging import LoggingMiddleware, setup_logging
+from bot.handlers.commands import commands_router
+from bot.handlers.messages import messages_router
+from bot.handlers.errors import errors_router
+from bot.services.google_sheets import get_sheets_service
 
 logger = structlog.get_logger()
 

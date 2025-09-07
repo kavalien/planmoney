@@ -22,6 +22,10 @@ class Config:
     AUTHORIZED_USER_1: int = int(os.getenv("AUTHORIZED_USER_1", "0"))
     AUTHORIZED_USER_2: int = int(os.getenv("AUTHORIZED_USER_2", "0"))
     
+    # Group Chat Configuration
+    ALLOW_GROUP_CHAT: bool = os.getenv("ALLOW_GROUP_CHAT", "true").lower() == "true"
+    AUTHORIZED_GROUP_ID: int = int(os.getenv("AUTHORIZED_GROUP_ID", "0"))
+    
     @property
     def authorized_users(self) -> List[int]:
         """Get list of authorized user IDs."""
