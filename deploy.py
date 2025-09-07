@@ -13,9 +13,8 @@ from pathlib import Path
 # Add project root to path
 sys.path.append(str(Path(__file__).parent))
 
-from bot.main import create_bot, setup_handlers, setup_middlewares
-from bot.config import Config
-from bot.services.google_sheets import GoogleSheetsService
+from bot.main import create_bot
+from bot.services.google_sheets import get_sheets_service
 import structlog
 
 # Configure logging for production
@@ -51,20 +50,14 @@ async def main():
     print("🚀 Starting Telegram Finance Bot (Production Mode)")
     print("=" * 50)
     
-    # Validate environment
-    config = Config()
-    
-    # Create bot and dispatcher
-    bot, dp = create_bot()
-    
-    # Setup middlewares and handlers
-    setup_middlewares(dp, config)
-    setup_handlers(dp)
+    # Validate environment and create bot
+    finance_bot = await create_bot()
+    bot = finance_bot.bot
+    dp = finance_bot.dp
     
     # Initialize Google Sheets service
     logger.info("Initializing Google Sheets service...")
-    sheets_service = GoogleSheetsService()
-    await sheets_service.initialize()
+    sheets_service = await get_sheets_service()
     
     # Test Google Sheets connection
     try:
@@ -121,13 +114,14 @@ async def main():
         finally:
             await runner.cleanup()
             await bot.delete_webhook()
+            await finance_bot.stop()
             
     else:
         # Fallback to polling mode
         logger.info("Starting bot in polling mode (fallback)")
         
         await bot.delete_webhook(drop_pending_updates=True)
-        await dp.start_polling(bot)
+        await finance_bot.start_polling()
 
 if __name__ == "__main__":
     try:
