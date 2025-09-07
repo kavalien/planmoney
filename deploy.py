@@ -70,13 +70,28 @@ async def main():
         logger.warning("Google Sheets service unavailable", error=str(e))
     
     # Get webhook settings from environment
-    webhook_host = os.getenv('RAILWAY_STATIC_URL') or os.getenv('WEBHOOK_HOST')
+    # Railway provides different environment variables
+    webhook_host = (
+        os.getenv('RAILWAY_PUBLIC_DOMAIN') or 
+        os.getenv('RAILWAY_STATIC_URL') or 
+        os.getenv('WEBHOOK_HOST')
+    )
     webhook_port = int(os.getenv('PORT', 8000))
     webhook_path = '/webhook'
     
-    if webhook_host:
+    # Railway specific: if PORT is set, assume we're in Railway and should use webhook
+    is_railway = os.getenv('RAILWAY_ENVIRONMENT') or os.getenv('PORT')
+    
+    if webhook_host or is_railway:
         # Production mode with webhook
-        webhook_url = f"https://{webhook_host}{webhook_path}"
+        if not webhook_host:
+            # If no explicit webhook host, Railway will provide one via public domain
+            # For now, we'll start without webhook and Railway will handle routing
+            webhook_url = f"https://placeholder.railway.app{webhook_path}"
+            logger.info("Railway deployment detected, using webhook mode without explicit domain")
+        else:
+            webhook_url = f"https://{webhook_host}{webhook_path}"
+            logger.info("Using explicit webhook URL", webhook_url=webhook_url)
         
         logger.info("Starting bot in webhook mode", 
                    webhook_url=webhook_url, 

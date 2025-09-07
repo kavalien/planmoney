@@ -75,15 +75,43 @@ class GoogleSheetsService:
                         'https://www.googleapis.com/auth/drive'
                     ]
                     
-                    # Load credentials
-                    if not os.path.exists(self.config.GOOGLE_CREDENTIALS_FILE):
-                        raise GoogleSheetsError(f"Credentials file not found: {self.config.GOOGLE_CREDENTIALS_FILE}")
-                    
-                    # Create credentials
-                    creds = Credentials.from_service_account_file(
-                        self.config.GOOGLE_CREDENTIALS_FILE, 
-                        scopes=scope
-                    )
+                    # Try environment variables first (for Railway/production)
+                    google_type = os.getenv('GOOGLE_TYPE')
+                    if google_type == 'service_account':
+                        # Use environment variables
+                        service_account_info = {
+                            "type": os.getenv('GOOGLE_TYPE'),
+                            "project_id": os.getenv('GOOGLE_PROJECT_ID'),
+                            "private_key_id": os.getenv('GOOGLE_PRIVATE_KEY_ID'),
+                            "private_key": os.getenv('GOOGLE_PRIVATE_KEY', '').replace('\\n', '\n'),
+                            "client_email": os.getenv('GOOGLE_CLIENT_EMAIL'),
+                            "client_id": os.getenv('GOOGLE_CLIENT_ID'),
+                            "auth_uri": os.getenv('GOOGLE_AUTH_URI', 'https://accounts.google.com/o/oauth2/auth'),
+                            "token_uri": os.getenv('GOOGLE_TOKEN_URI', 'https://oauth2.googleapis.com/token'),
+                            "auth_provider_x509_cert_url": os.getenv('GOOGLE_AUTH_PROVIDER_X509_CERT_URL', 'https://www.googleapis.com/oauth2/v1/certs'),
+                            "client_x509_cert_url": os.getenv('GOOGLE_CLIENT_X509_CERT_URL')
+                        }
+                        
+                        # Check if all required fields are present
+                        required_fields = ['project_id', 'private_key', 'client_email']
+                        missing_fields = [field for field in required_fields if not service_account_info.get(field)]
+                        
+                        if missing_fields:
+                            raise GoogleSheetsError(f"Missing required environment variables: {missing_fields}")
+                        
+                        logger.info("Using Google Service Account from environment variables")
+                        creds = Credentials.from_service_account_info(service_account_info, scopes=scope)
+                        
+                    else:
+                        # Fallback to credentials file (for local development)
+                        if not os.path.exists(self.config.GOOGLE_CREDENTIALS_FILE):
+                            raise GoogleSheetsError(f"Credentials file not found: {self.config.GOOGLE_CREDENTIALS_FILE}")
+                        
+                        logger.info("Using Google Service Account from credentials file")
+                        creds = Credentials.from_service_account_file(
+                            self.config.GOOGLE_CREDENTIALS_FILE, 
+                            scopes=scope
+                        )
                     
                     # Only refresh credentials if they are actually expired
                     if creds.expired:
